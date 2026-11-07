@@ -45,6 +45,12 @@ input,select{width:100%;background:var(--bg);color:var(--ink);border:1px solid v
 .sf input[type=file]{width:100%;margin-top:8px;padding:8px 10px;font-size:14px}
 .sf .sc .btn{margin-left:auto}
 .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.sc2{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.sc2 input,.sc2 select{width:auto;padding:6px 10px;min-height:36px;font-size:14px}
+.gl{margin-top:8px;font-size:14px;color:var(--mute)}
+.gl button{background:none;border:0;color:var(--bad);cursor:pointer;font:inherit;padding:4px 8px}
+.rk{display:inline-block;width:22px;color:var(--mute)}
+button:disabled{opacity:.6;cursor:wait}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:99px;font-weight:600;z-index:9;max-width:90vw}
 #modal:not(:empty){position:fixed;inset:0;background:rgba(0,0,0,.6);display:grid;place-items:center;padding:16px;z-index:8}
 #modal .card{max-width:420px;width:100%;margin:0}
@@ -72,6 +78,7 @@ const fail=e=>{toast(e.message||'Something went wrong');return true};
 async function render(){
   $('auth').innerHTML=user?'<button class="btn ghost s" onclick="sb.auth.signOut()">Sign out</button>':'<button class="btn s" onclick="location.hash=\'login\'">Sign in</button>';
   const h=location.hash.slice(1);
+  document.title='Kickoff – eFootball tournaments';
   try{
     if(h==='login')loginView();
     else if(h.startsWith('t-'))await tourView(h.slice(2));
@@ -108,13 +115,17 @@ async function tourView(slug){
   const {data:t,error}=await sb.from('tournaments').select('*').eq('slug',slug).maybeSingle();
   if(error)throw error;
   if(!t){$('app').innerHTML='<div class="card empty">Tournament not found.</div>';return}
-  const [tm,mt,st]=await Promise.all([
+  const [tm,mt,st,gl,sc]=await Promise.all([
     sb.from('teams').select('*').eq('tournament_id',t.id).order('created_at'),
     sb.from('matches').select('*').eq('tournament_id',t.id).order('round'),
-    sb.from('league_standings').select('*').eq('tournament_id',t.id).order('points',{ascending:false}).order('goal_diff',{ascending:false})]);
+    sb.from('league_standings').select('*').eq('tournament_id',t.id).order('points',{ascending:false}).order('goal_diff',{ascending:false}),
+    sb.from('player_goals').select('*,matches!inner(tournament_id)').eq('matches.tournament_id',t.id),
+    sb.from('top_scorers').select('*').eq('tournament_id',t.id).order('goals',{ascending:false}).limit(10)]);
   for(const r of [tm,mt,st])if(r.error)throw r.error;
   const teams=tm.data,matches=mt.data,own=!!user&&t.owner_id===user.id;
-  cur={t,teams,matches};
+  const goals=gl.error?[]:gl.data,scorers=sc.error?[]:sc.data;
+  cur={t,teams,matches,goals};
+  document.title=t.name+' · Kickoff';
   const byId=Object.fromEntries(teams.map(x=>[x.id,x]));
   const mine=user?teams.filter(x=>x.captain_user_id===user.id):[];
   const approved=teams.filter(x=>x.status==='approved');
@@ -123,17 +134,19 @@ async function tourView(slug){
   const matchCard=m=>{
     const done=m.status==='confirmed'||m.status==='walkover';
     const my=mine.find(x=>x.id===m.home_team_id||x.id===m.away_team_id);
+    const gs=goals.filter(g=>g.match_id===m.id),can=own||!!my,tops=teams.filter(x=>(x.id===m.home_team_id||x.id===m.away_team_id)&&(own||(user&&x.captain_user_id===user.id)));
     const chip=m.status==='walkover'?'<span class="chip">walkover</span>':done?'':`<span class="chip ${m.status==='disputed'?'bad':''}">${m.status==='awaiting'?'awaiting 2nd score':esc(m.status)}</span>`;
     return `<div class="card"><div class="row"><span>${nm(m.home_team_id)}</span><b>${done?`${m.home_score} – ${m.away_score}`:'vs'}</b><span style="text-align:right">${nm(m.away_team_id)}</span></div>
-    <div class="row sm" style="margin-top:6px">${chip}${own&&(m.status==='disputed'||m.status==='awaiting')?`<button class="btn ghost s" onclick="proofs('${m.id}')">View proofs</button>`:''}</div>
+    <div class="row sm" style="margin-top:6px">${chip}${own&&(m.status==='disputed'||m.status==='awaiting')?`<button class="btn ghost s" onclick="proofs('${m.id}')">View proofs</button>`:''}${done?`<button class="btn ghost s" onclick="shareCard('${m.id}')">Share result</button>`:''}</div>
     ${my&&!done?`<form class="sf" onsubmit="submitRes(event,'${m.id}','${my.id}')"><div class="sc"><input name="h" type="number" min="0" max="99" required aria-label="Home goals"><span>–</span><input name="a" type="number" min="0" max="99" required aria-label="Away goals"><button class="btn s">Send result</button></div><input name="p" type="file" accept="image/*" required aria-label="Screenshot proof"><div class="sm">Score as home – away, with a screenshot.</div></form>`:''}
-    ${own&&!done?`<div class="sm" style="margin-top:10px">Organizer: set the result directly</div><form class="sf" onsubmit="rule(event,'${m.id}')"><div class="sc"><input name="h" type="number" min="0" max="99" required aria-label="Final home goals"><span>–</span><input name="a" type="number" min="0" max="99" required aria-label="Final away goals"><button class="btn s">Save result</button></div></form><div class="acts"><button class="btn ghost s" onclick="walkover('${m.id}','h')">Home wins by walkover</button><button class="btn ghost s" onclick="walkover('${m.id}','a')">Away wins by walkover</button></div>`:''}</div>`;
+    ${own&&!done?`<div class="sm" style="margin-top:10px">Organizer: set the result directly</div><form class="sf" onsubmit="rule(event,'${m.id}')"><div class="sc"><input name="h" type="number" min="0" max="99" required aria-label="Final home goals"><span>–</span><input name="a" type="number" min="0" max="99" required aria-label="Final away goals"><button class="btn s">Save result</button></div></form><div class="acts"><button class="btn ghost s" onclick="walkover('${m.id}','h')">Home wins by walkover</button><button class="btn ghost s" onclick="walkover('${m.id}','a')">Away wins by walkover</button></div>`:''}${gs.length?`<div class="gl">${gs.map(g=>`⚽ ${esc(g.player_name)}${g.goals>1?' ×'+g.goals:''} (${nm(g.team_id)})${can?`<button onclick="delGoal('${g.id}')">remove</button>`:''}`).join('<br>')}</div>`:''}${m.status==='confirmed'&&can&&tops.length?`<form class="sc2" onsubmit="addGoal(event,'${m.id}')"><select name="t" aria-label="Team">${tops.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select><input name="p" placeholder="Scorer" maxlength="30" required aria-label="Scorer name" style="flex:1;min-width:110px"><input name="g" type="number" min="1" max="20" value="1" aria-label="Goals" style="width:64px"><button class="btn s">Add scorer</button></form>`:''}</div>`;
   };
   $('app').innerHTML=`<section style="margin-top:6px"><div class="row"><h2 style="margin:0">${esc(t.name)}</h2><span class="chip ok">${esc(t.status)}</span></div>
   <p class="sm">${t.legs==2?'Home and away':'Single'} round-robin · ${approved.length} teams approved</p>
   <button class="btn ghost s" onclick="navigator.clipboard.writeText(location.href).then(()=>toast('Link copied'))">Copy share link</button></section>
   ${own&&t.status==='registration'?`<section><div class="card"><b>Organizer</b><p class="sm">Approve teams below, then generate fixtures (needs at least 3 approved). Registration closes when fixtures are generated.</p><button class="btn" onclick="generate()">Generate fixtures</button></div></section>`:''}
   ${st.data.length?`<section><h2>Standings</h2><div class="card" style="overflow-x:auto"><table class="tbl"><thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th></tr></thead><tbody>${st.data.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r.name)}</td><td>${r.played}</td><td>${r.won}</td><td>${r.drawn}</td><td>${r.lost}</td><td>${r.goal_diff>0?'+':''}${r.goal_diff}</td><td>${r.points}</td></tr>`).join('')}</tbody></table></div></section>`:''}
+  ${scorers.length?`<section><h2>Top scorers</h2><div class="card">${scorers.map((r,i)=>`<div class="team"><span class="rk">${i+1}</span><div style="flex:1"><b>${esc(r.player_name)}</b><div class="sm">${esc(r.team_name)}</div></div><b>${r.goals}</b></div>`).join('')}</div></section>`:''}
   ${rounds.length?`<section><h2>Fixtures</h2>${rounds.map(r=>`<div class="rnd">Matchday ${r}</div>${matches.filter(m=>m.round===r).map(matchCard).join('')}`).join('')}</section>`:''}
   <section><h2>Teams (${teams.length})</h2><div class="card">${teams.length?teams.map(x=>`<div class="team">${logo(x)}<div style="flex:1;min-width:0"><div style="font-weight:600">${esc(x.name)}</div><div class="sm">${esc(x.efootball_id||'No ID')} · ${esc(x.captain_name||'No captain')}</div></div>${x.status==='approved'?'':`<span class="chip ${x.status==='rejected'?'bad':''}">${esc(x.status)}</span>`}${own&&x.status==='pending'?`<button class="btn s" onclick="setTeam('${x.id}','approved')">Approve</button><button class="btn ghost s" onclick="setTeam('${x.id}','rejected')">Reject</button>`:''}</div>`).join(''):'<div class="empty">No teams yet.</div>'}</div></section>
   ${t.status==='registration'?(user?`<section><h2>Register a team</h2><form class="card" onsubmit="regTeam(event)"><label for="n">Team name</label><input id="n" name="name" required minlength="2" maxlength="24"><label for="e">eFootball ID</label><input id="e" name="efid" maxlength="20"><label for="c">Captain name</label><input id="c" name="cap" maxlength="30"><label for="l">Logo (optional)</label><input id="l" name="logo" type="file" accept="image/*"><div class="mt"><button class="btn">Submit for approval</button></div></form></section>`:`<section><div class="card empty">Sign in to register your team.<br><br><button class="btn" onclick="location.hash='login'">Sign in</button></div></section>`):''}`;
@@ -201,9 +214,4 @@ async function proofs(matchId){
   $('modal').innerHTML=`<div class="card"><h3>Submitted results</h3>${rows.join('')||'<p class="sm">No submissions.</p>'}<div class="mt"><button class="btn" onclick="$('modal').innerHTML=''">Close</button></div></div>`;
 }
 
-sb.auth.onAuthStateChange((_ev,s)=>{user=s?s.user:null;render()});
-sb.auth.getSession().then(({data})=>{user=data.session?data.session.user:null;render()});
-addEventListener('hashchange',render);
-</script>
-</body>
-</html>
+async function addGoal(e,
