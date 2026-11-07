@@ -42,7 +42,9 @@ input,select{width:100%;background:var(--bg);color:var(--ink);border:1px solid v
 .tbl td:last-child{font:800 20px "Barlow Condensed",sans-serif;color:var(--acc)}
 .sc{display:flex;gap:6px;align-items:center;margin-top:8px}
 .sc input{width:56px;text-align:center}
-.sc input[type=file]{width:auto;flex:1;min-width:0}
+.sf input[type=file]{width:100%;margin-top:8px;padding:8px 10px;font-size:14px}
+.sf .sc .btn{margin-left:auto}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:99px;font-weight:600;z-index:9;max-width:90vw}
 #modal:not(:empty){position:fixed;inset:0;background:rgba(0,0,0,.6);display:grid;place-items:center;padding:16px;z-index:8}
 #modal .card{max-width:420px;width:100%;margin:0}
@@ -121,10 +123,90 @@ async function tourView(slug){
   const matchCard=m=>{
     const done=m.status==='confirmed'||m.status==='walkover';
     const my=mine.find(x=>x.id===m.home_team_id||x.id===m.away_team_id);
-    const chip=done?'':`<span class="chip ${m.status==='disputed'?'bad':''}">${m.status==='awaiting'?'awaiting 2nd score':esc(m.status)}</span>`;
+    const chip=m.status==='walkover'?'<span class="chip">walkover</span>':done?'':`<span class="chip ${m.status==='disputed'?'bad':''}">${m.status==='awaiting'?'awaiting 2nd score':esc(m.status)}</span>`;
     return `<div class="card"><div class="row"><span>${nm(m.home_team_id)}</span><b>${done?`${m.home_score} – ${m.away_score}`:'vs'}</b><span style="text-align:right">${nm(m.away_team_id)}</span></div>
-    <div class="row sm" style="margin-top:6px">${chip}${own&&m.status==='disputed'?`<button class="btn ghost s" onclick="proofs('${m.id}')">View proofs</button>`:''}</div>
-    ${my&&!done?`<form class="sc" onsubmit="submitRes(event,'${m.id}','${my.id}')"><input name="h" type="number" min="0" max="99" required aria-label="Home goals"><span>–</span><input name="a" type="number" min="0" max="99" required aria-label="Away goals"><input name="p" type="file" accept="image/*" required aria-label="Screenshot proof"><button class="btn s">Send</button></form><div class="sm">Enter score as home – away, with a screenshot.</div>`:''}
+    <div class="row sm" style="margin-top:6px">${chip}${own&&(m.status==='disputed'||m.status==='awaiting')?`<button class="btn ghost s" onclick="proofs('${m.id}')">View proofs</button>`:''}</div>
+    ${my&&!done?`<form class="sf" onsubmit="submitRes(event,'${m.id}','${my.id}')"><div class="sc"><input name="h" type="number" min="0" max="99" required aria-label="Home goals"><span>–</span><input name="a" type="number" min="0" max="99" required aria-label="Away goals"><button class="btn s">Send result</button></div><input name="p" type="file" accept="image/*" required aria-label="Screenshot proof"><div class="sm">Score as home – away, with a screenshot.</div></form>`:''}
+    ${own&&!done?`<div class="sm" style="margin-top:10px">Organizer: set the result directly</div><form class="sf" onsubmit="rule(event,'${m.id}')"><div class="sc"><input name="h" type="number" min="0" max="99" required aria-label="Final home goals"><span>–</span><input name="a" type="number" min="0" max="99" required aria-label="Final away goals"><button class="btn s">Save result</button></div></form><div class="acts"><button class="btn ghost s" onclick="walkover('${m.id}','h')">Home wins by walkover</button><button class="btn ghost s" onclick="walkover('${m.id}','a')">Away wins by walkover</button></div>`:''}</div>`;
+  };
+  $('app').innerHTML=`<section style="margin-top:6px"><div class="row"><h2 style="margin:0">${esc(t.name)}</h2><span class="chip ok">${esc(t.status)}</span></div>
+  <p class="sm">${t.legs==2?'Home and away':'Single'} round-robin · ${approved.length} teams approved</p>
+  <button class="btn ghost s" onclick="navigator.clipboard.writeText(location.href).then(()=>toast('Link copied'))">Copy share link</button></section>
+  ${own&&t.status==='registration'?`<section><div class="card"><b>Organizer</b><p class="sm">Approve teams below, then generate fixtures (needs at least 3 approved). Registration closes when fixtures are generated.</p><button class="btn" onclick="generate()">Generate fixtures</button></div></section>`:''}
+  ${st.data.length?`<section><h2>Standings</h2><div class="card" style="overflow-x:auto"><table class="tbl"><thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GD</th><th>Pts</th></tr></thead><tbody>${st.data.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r.name)}</td><td>${r.played}</td><td>${r.won}</td><td>${r.drawn}</td><td>${r.lost}</td><td>${r.goal_diff>0?'+':''}${r.goal_diff}</td><td>${r.points}</td></tr>`).join('')}</tbody></table></div></section>`:''}
+  ${rounds.length?`<section><h2>Fixtures</h2>${rounds.map(r=>`<div class="rnd">Matchday ${r}</div>${matches.filter(m=>m.round===r).map(matchCard).join('')}`).join('')}</section>`:''}
+  <section><h2>Teams (${teams.length})</h2><div class="card">${teams.length?teams.map(x=>`<div class="team">${logo(x)}<div style="flex:1;min-width:0"><div style="font-weight:600">${esc(x.name)}</div><div class="sm">${esc(x.efootball_id||'No ID')} · ${esc(x.captain_name||'No captain')}</div></div>${x.status==='approved'?'':`<span class="chip ${x.status==='rejected'?'bad':''}">${esc(x.status)}</span>`}${own&&x.status==='pending'?`<button class="btn s" onclick="setTeam('${x.id}','approved')">Approve</button><button class="btn ghost s" onclick="setTeam('${x.id}','rejected')">Reject</button>`:''}</div>`).join(''):'<div class="empty">No teams yet.</div>'}</div></section>
+  ${t.status==='registration'?(user?`<section><h2>Register a team</h2><form class="card" onsubmit="regTeam(event)"><label for="n">Team name</label><input id="n" name="name" required minlength="2" maxlength="24"><label for="e">eFootball ID</label><input id="e" name="efid" maxlength="20"><label for="c">Captain name</label><input id="c" name="cap" maxlength="30"><label for="l">Logo (optional)</label><input id="l" name="logo" type="file" accept="image/*"><div class="mt"><button class="btn">Submit for approval</button></div></form></section>`:`<section><div class="card empty">Sign in to register your team.<br><br><button class="btn" onclick="location.hash='login'">Sign in</button></div></section>`):''}`;
+}
+
+async function regTeam(e){
+  e.preventDefault();const f=e.target,t=cur.t,file=f.logo.files[0];
+  let logo_url=null;
+  if(file){
+    if(file.size>3e6)return toast('Logo must be under 3 MB');
+    const path=`${t.id}/${user.id}-${Date.now()}.${ext(file)}`;
+    const up=await sb.storage.from('logos').upload(path,file);
+    if(up.error)return fail(up.error);
+    logo_url=sb.storage.from('logos').getPublicUrl(path).data.publicUrl;
+  }
+  const {error}=await sb.from('teams').insert({tournament_id:t.id,name:f.name.value.trim(),efootball_id:f.efid.value.trim()||null,captain_name:f.cap.value.trim()||null,captain_user_id:user.id,logo_url});
+  if(error)return fail(error.code==='23505'?{message:'That team name is taken'}:error);
+  toast('Submitted. Waiting for approval');render();
+}
+async function setTeam(id,status){const {error}=await sb.from('teams').update({status}).eq('id',id);if(error)return fail(error);render()}
+
+async function generate(){
+  const {t,teams}=cur,ids=teams.filter(x=>x.status==='approved').map(x=>x.id);
+  if(ids.length<3)return toast('Approve at least 3 teams first');
+  if(!confirm('Generate fixtures? Registration will close.'))return;
+  if(ids.length%2)ids.push(null);
+  const n=ids.length;let arr=ids.slice();const rounds=[];
+  for(let r=0;r<n-1;r++){const ms=[];for(let i=0;i<n/2;i++){const a=arr[i],b=arr[n-1-i];if(a&&b)ms.push(r%2?[b,a]:[a,b])}rounds.push(ms);arr=[arr[0],arr[n-1],...arr.slice(1,n-1)]}
+  const all=rounds.slice();if(t.legs==2)rounds.forEach(ms=>all.push(ms.map(m=>[m[1],m[0]])));
+  const rows=[];all.forEach((ms,r)=>ms.forEach(m=>rows.push({tournament_id:t.id,round:r+1,home_team_id:m[0],away_team_id:m[1]})));
+  const a=await sb.from('matches').insert(rows);if(a.error)return fail(a.error);
+  const b=await sb.from('tournaments').update({status:'live'}).eq('id',t.id);if(b.error)return fail(b.error);
+  toast('Fixtures generated');render();
+}
+
+async function submitRes(e,matchId,teamId){
+  e.preventDefault();const f=e.target,file=f.p.files[0];
+  if(file.size>5e6)return toast('Screenshot must be under 5 MB');
+  const path=`${matchId}/${teamId}-${Date.now()}.${ext(file)}`;
+  const up=await sb.storage.from('proofs').upload(path,file);if(up.error)return fail(up.error);
+  const {error}=await sb.from('result_submissions').upsert({match_id:matchId,team_id:teamId,home_score:+f.h.value,away_score:+f.a.value,screenshot_url:path},{onConflict:'match_id,team_id'});
+  if(error)return fail(error);
+  toast('Result sent');render();
+}
+async function rule(e,matchId){
+  e.preventDefault();const f=e.target;
+  const {error}=await sb.from('matches').update({home_score:+f.h.value,away_score:+f.a.value,status:'confirmed'}).eq('id',matchId);
+  if(error)return fail(error);
+  toast('Result saved');render();
+}
+async function walkover(id,side){
+  if(!confirm('Award a 3–0 walkover win?'))return;
+  const {error}=await sb.from('matches').update({home_score:side==='h'?3:0,away_score:side==='h'?0:3,status:'walkover'}).eq('id',id);
+  if(error)return fail(error);
+  toast('Walkover recorded');render();
+}
+async function proofs(matchId){
+  const {data,error}=await sb.from('result_submissions').select('team_id,home_score,away_score,screenshot_url').eq('match_id',matchId);
+  if(error)return fail(error);
+  const rows=await Promise.all(data.map(async s=>{
+    const u=s.screenshot_url?(await sb.storage.from('proofs').createSignedUrl(s.screenshot_url,600)).data:null;
+    const t=cur.teams.find(x=>x.id===s.team_id);
+    return `<div class="team"><div style="flex:1"><b>${esc(t?t.name:'Team')}</b><div class="sm">Reported ${s.home_score} – ${s.away_score}</div></div>${u?`<a class="btn ghost s" href="${esc(u.signedUrl)}" target="_blank" rel="noopener">Screenshot</a>`:''}</div>`;
+  }));
+  $('modal').innerHTML=`<div class="card"><h3>Submitted results</h3>${rows.join('')||'<p class="sm">No submissions.</p>'}<div class="mt"><button class="btn" onclick="$('modal').innerHTML=''">Close</button></div></div>`;
+}
+
+sb.auth.onAuthStateChange((_ev,s)=>{user=s?s.user:null;render()});
+sb.auth.getSession().then(({data})=>{user=data.session?data.session.user:null;render()});
+addEventListener('hashchange',render);
+</script>
+</body>
+</html>m.id}','${my.id}')"><input name="h" type="number" min="0" max="99" required aria-label="Home goals"><span>–</span><input name="a" type="number" min="0" max="99" required aria-label="Away goals"><input name="p" type="file" accept="image/*" required aria-label="Screenshot proof"><button class="btn s">Send</button></form><div class="sm">Enter score as home – away, with a screenshot.</div>`:''}
     ${own&&m.status==='disputed'?`<form class="sc" onsubmit="rule(event,'${m.id}')"><input name="h" type="number" min="0" max="99" required aria-label="Final home goals"><span>–</span><input name="a" type="number" min="0" max="99" required aria-label="Final away goals"><button class="btn s">Confirm final score</button></form>`:''}</div>`;
   };
   $('app').innerHTML=`<section style="margin-top:6px"><div class="row"><h2 style="margin:0">${esc(t.name)}</h2><span class="chip ok">${esc(t.status)}</span></div>
